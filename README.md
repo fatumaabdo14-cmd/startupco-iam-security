@@ -10,7 +10,10 @@ This project transforms StartupCo's cloud security from critical (all employees 
 - ✅ Created 10 IAM users with environment-based access restrictions
 - ✅ Built custom security policies enforcing least-privilege principle
 - ✅ Deployed as Infrastructure as Code using Terraform (186 lines, fully tested)
+  
+## Architecture Diagram
 
+![StartupCo IAM Security Architecture](startupco-iam-architecture.png)
 ## The Problem
 
 **Before:**

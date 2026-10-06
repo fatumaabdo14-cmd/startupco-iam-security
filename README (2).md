@@ -1,4 +1,5 @@
 # StartupCo AWS Security Implementation
+![StartupCo IAM Architecture](startupco-iam-architecture.png)
 
 Hardening a fast-growing startup's AWS account in two phases: **Level 1** replaced shared root credentials with least-privilege IAM; **Level 2** moved sensitive access to temporary, MFA-protected roles and encrypted customer data with a customer-managed KMS key.
 

@@ -1,7 +1,7 @@
 # StartupCo AWS Security Implementation
 ![StartupCo IAM Architecture](startupco-iam-architecture.png)
 
-Hardening a fast-growing startup's AWS account in two phases: **Level 1** replaced shared root credentials with least-privilege IAM; **Level 2** moved sensitive access to temporary, MFA-protected roles and encrypted customer data with a customer-managed KMS key.
+Hardening a fast-growing startup's AWS account in three phases: **Level 1** replaced shared root credentials with least-privilege IAM; **Level 2** moved sensitive access to temporary, MFA-protected roles and encrypted customer data with a customer-managed KMS key; **Level 3** enforced MFA for every IAM user and brought group permissions fully under Terraform.
 
 ---
 
@@ -16,21 +16,12 @@ StartupCo (10 employees, fitness tracking app) launched quickly on AWS. After th
 
 ---
 
-## Level 1: Identity Foundation
-
-| Change | Result |
-|---|---|
-| Root account secured with MFA, removed from daily use | 0 people use root day to day |
-| 4 IAM groups (Developers, Operations, Finance, Analyst) | Role-based access control |
-| 10 IAM users, each in one group | Individual accountability |
-| Custom policies: `DeveloperEC2DevAccess`, `DeveloperS3DevAccess` | Developers limited to dev resources via `Environment` tags |
-| Deployed with Terraform (`terraform import` to adopt existing resources) | IAM defined as code |
-
-**Files**
+## Repository
 
 | File | Purpose |
 |---|---|
-| `main.tf` | All IAM resources: groups, users, policies |
+| `main.tf` | Groups, users, custom policies and group policy attachments (reflects Level 2 group permissions) |
+| `mfa.tf` | Level 3: `Require_mfa` policy and its attachment to all four groups |
 | `variables.tf` | Input variables |
 | `output.tf` | Output values |
 | `README.md` | This documentation |
@@ -43,7 +34,17 @@ terraform plan
 terraform apply
 ```
 
-**Stats:** 186 lines of Terraform · 4 groups · 10 users · 2 custom policies · 17 resources
+---
+
+## Level 1: Identity Foundation
+
+| Change | Result |
+|---|---|
+| Root account secured with MFA, removed from daily use | 0 people use root day to day |
+| 4 IAM groups (Developers, Operations, Finance, Analyst) | Role-based access control |
+| 10 IAM users, each in one group | Individual accountability |
+| Custom policies: `DeveloperEC2DevAccess`, `DeveloperS3DevAccess` | Developers limited to dev resources via `Environment` tags |
+| Deployed with Terraform (`terraform import` to adopt existing resources) | IAM defined as code |
 
 ---
 
@@ -97,8 +98,6 @@ Level 1 controlled **who gets in**. Level 2 limits **what happens if an account 
 
 ### 4. Verification: IAM Policy Simulator
 
-Every control was validated before being considered done.
-
 A test passes when the real result matches the expected result. A **Denied** can be a pass: it proves a door is locked that should be locked.
 
 **Operations role**
@@ -135,6 +134,47 @@ A test passes when the real result matches the expected result. A **Denied** can
 
 ---
 
+## Level 3: MFA Enforcement for All Users
+
+Level 2 required MFA to assume privileged roles. Level 3 extends MFA to **every IAM user**, so a stolen password alone grants nothing beyond registering an MFA device.
+
+### Policy: `Require_mfa`
+
+| Statement | Effect | What it does |
+|---|---|---|
+| `AllowManageOwnMFA` | Allow | Create, enable, list and resync **own** MFA device; change own password; view own user. Scoped to `${aws:username}` |
+| `DenyAllWithoutMFA` | Deny | Every action **except** the above (`NotAction`), whenever `aws:MultiFactorAuthPresent` is false or absent |
+
+**Attached to:** Developer, Operations, Finance, Analyst (`mfa.tf`).
+
+### Design Decisions
+
+- **Explicit deny overrides every allow.** One policy secures all four groups without modifying their existing permissions.
+- **Self-service exceptions prevent lockout.** A new user can register an MFA device before anything else is permitted.
+- **`BoolIfExists`** treats a missing MFA flag as "no MFA," which also covers requests made with long-lived access keys.
+- **Group-level attachment.** New users inherit enforcement automatically when added to a group.
+
+### Verification
+
+| Identity | Action | MFA context | Expected | Result | Test |
+|---|---|---|---|---|---|
+| finance-user-1 | `budgets:ViewBudget` | Absent | Denied | Explicit deny | ✅ Pass |
+| finance-user-1 | `budgets:ViewBudget` | `true` | Allowed | Allowed | ✅ Pass |
+
+Same identity, same action: the only variable is MFA. The second test was run from the CLI:
+
+```bash
+aws iam simulate-principal-policy \
+  --policy-source-arn arn:aws:iam::<account-id>:user/finance-user-1 \
+  --action-names budgets:ViewBudget \
+  --context-entries "ContextKeyName=aws:MultiFactorAuthPresent,ContextKeyValues=true,ContextKeyType=boolean" \
+  --query "EvaluationResults[].EvalDecision"
+```
+
+**Scope note:** enforcement is deployed to all groups. This is a single-operator lab account, so MFA devices were not registered for each of the 10 test users; enforcement behavior was validated with the IAM policy simulator.
+
+---
+
 ## Implementation Challenges
 
 **1. No dedicated customer-data bucket, resources split across regions.**
@@ -146,6 +186,9 @@ The key had been disabled during region cleanup. Re-enabling it restored uploads
 **3. Simulator results for `sts:AssumeRole` depend on the resource.**
 With the resource left as `*`, AssumeRole evaluated as denied because the policy is scoped to a single role ARN. Supplying the exact role ARN produced the correct result. Least privilege works as intended.
 
+**4. Configuration drift reverted Level 2 controls.**
+Level 2 group changes were made in the console, while `main.tf` still described Level 1. `terraform apply` reconciles every file in the working directory, so applying the Level 3 configuration also re-attached the Operations full-access policies and the Analyst data policies. Detected with `aws iam list-attached-group-policies`; resolved by codifying the Level 2 group permissions in `main.tf` and re-applying (3 attachments added, 6 removed). Group permissions are now changed only through Terraform, and every apply is preceded by a reviewed `terraform plan`.
+
 ---
 
 ## Before and After
@@ -154,20 +197,23 @@ With the resource left as `*`, AssumeRole evaluated as denied because the policy
 |---|---|---|
 | Root account | Shared by 10 people | MFA-protected, emergency only |
 | Access model | Everyone is admin | 4 groups, least privilege |
+| MFA | None | Required for every IAM user |
 | Production changes | Anyone, anytime | Ops only, via 1-hour MFA-protected role |
 | Customer data access | Anyone | Analysts only, via 4-hour MFA-protected role |
 | Customer data at rest | Unencrypted | SSE-KMS with customer-managed key |
+| Group permissions | Manual | Managed in Terraform |
 | Audit trail | None | CloudTrail; KMS key usage logged |
-| Validation | None | 8 Policy Simulator tests + encryption test |
+| Validation | None | 10 Policy Simulator tests + encryption test |
 
 ---
 
 ## Next Steps
 
-- **Terraform:** codify the Level 2 roles, group policy changes, KMS key and bucket. Console changes are not yet in code, so do not run `terraform apply` until it is updated, or it will restore the old group permissions.
+- **Terraform:** codify the Level 2 roles (`StartupCo-OpsProdAdmin`, `StartupCo-AnalystData`), their inline `AssumeRole` policies, the KMS key and the bucket. Group permissions and MFA enforcement are already in code.
+- **Remote state:** move Terraform state to an S3 backend with state locking.
+- **Developer EC2 policy:** `ec2:DescribeInstances` does not support resource-tag conditions; split it into its own statement.
 - **RDS encryption:** encrypt the database (snapshot, encrypted copy with KMS, restore).
 - **Existing objects:** re-encrypt any objects stored before default encryption was enabled.
-- **MFA for all users:** enforce MFA on every IAM user, not only for role assumption.
 - **App server role:** EC2 instance role so the application never stores access keys.
 - **Database-level access:** read-only database user for analysts. `AmazonRDSReadOnlyAccess` covers RDS configuration, not table data.
 - **Longer term:** IAM Identity Center (SSO), separate dev and prod accounts with SCPs.

@@ -91,28 +91,24 @@ resource "aws_iam_group_policy_attachment" "developer_s3_attachment" {
   policy_arn = aws_iam_policy.developer_s3_dev_access.arn
 }
 
-# Attach AWS managed policies to Operations group
-resource "aws_iam_group_policy_attachment" "operations_ec2" {
+# Operations: read-only day to day (Level 2)
+# Production changes go through the StartupCo-OpsProdAdmin role with MFA
+resource "aws_iam_group_policy_attachment" "operations_ec2_readonly" {
   group      = aws_iam_group.operations.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2FullAccess"
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess"
 }
 
-resource "aws_iam_group_policy_attachment" "operations_rds" {
+resource "aws_iam_group_policy_attachment" "operations_rds_readonly" {
   group      = aws_iam_group.operations.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonRDSFullAccess"
+  policy_arn = "arn:aws:iam::aws:policy/AmazonRDSReadOnlyAccess"
 }
 
-resource "aws_iam_group_policy_attachment" "operations_cloudwatch" {
+resource "aws_iam_group_policy_attachment" "operations_cloudwatch_readonly" {
   group      = aws_iam_group.operations.name
-  policy_arn = "arn:aws:iam::aws:policy/CloudWatchFullAccess"
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess"
 }
 
-resource "aws_iam_group_policy_attachment" "operations_ssm" {
-  group      = aws_iam_group.operations.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
-
-# Attach AWS managed policies to Finance group
+# Finance: read-only billing and budgets
 resource "aws_iam_group_policy_attachment" "finance_budgets" {
   group      = aws_iam_group.finance.name
   policy_arn = "arn:aws:iam::aws:policy/AWSBudgetsReadOnlyAccess"
@@ -123,16 +119,8 @@ resource "aws_iam_group_policy_attachment" "finance_billing" {
   policy_arn = "arn:aws:iam::aws:policy/AWSBillingReadOnlyAccess"
 }
 
-# Attach AWS managed policies to Analyst group
-resource "aws_iam_group_policy_attachment" "analyst_s3" {
-  group      = aws_iam_group.analysts.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
-}
-
-resource "aws_iam_group_policy_attachment" "analyst_rds" {
-  group      = aws_iam_group.analysts.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonRDSReadOnlyAccess"
-}
+# Analysts: no direct data access (Level 2)
+# Customer data is reached only through the StartupCo-AnalystData role with MFA
 
 # Developer Users
 resource "aws_iam_user" "dev_users" {
@@ -159,28 +147,28 @@ resource "aws_iam_user" "analyst_users" {
 
 # Add developers to Developer group
 resource "aws_iam_group_membership" "developers" {
-  name       = "developer-membership"
-  users      = aws_iam_user.dev_users[*].name
-  group      = aws_iam_group.developers.name
+  name  = "developer-membership"
+  users = aws_iam_user.dev_users[*].name
+  group = aws_iam_group.developers.name
 }
 
 # Add operations to Operations group
 resource "aws_iam_group_membership" "operations" {
-  name       = "operations-membership"
-  users      = aws_iam_user.ops_users[*].name
-  group      = aws_iam_group.operations.name
+  name  = "operations-membership"
+  users = aws_iam_user.ops_users[*].name
+  group = aws_iam_group.operations.name
 }
 
 # Add finance to Finance group
 resource "aws_iam_group_membership" "finance" {
-  name       = "finance-membership"
-  users      = [aws_iam_user.finance_user.name]
-  group      = aws_iam_group.finance.name
+  name  = "finance-membership"
+  users = [aws_iam_user.finance_user.name]
+  group = aws_iam_group.finance.name
 }
 
 # Add analysts to Analyst group
 resource "aws_iam_group_membership" "analysts" {
-  name       = "analyst-membership"
-  users      = aws_iam_user.analyst_users[*].name
-  group      = aws_iam_group.analysts.name
+  name  = "analyst-membership"
+  users = aws_iam_user.analyst_users[*].name
+  group = aws_iam_group.analysts.name
 }
